@@ -1,0 +1,13 @@
+@import "tailwindcss";
+
+@source "../src";
+
+@layer utilities {
+  .shadow-glow-indigo {
+    box-shadow: 0 0 16px 2px rgba(99, 102, 241, 0.5);
+  }
+  .shadow-glow-emerald {
+    box-shadow: 0 0 16px 2px rgba(52, 211, 153, 0.4);
+  }
+}
+
