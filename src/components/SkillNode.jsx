@@ -7,22 +7,37 @@ const statusConfig = {
   completed: { label: '✅ Completed', borderColor: '#34d399', badgeBg: '#022c22', badgeColor: '#6ee7b7', textColor: '#6ee7b7' },
 }
 
+const relationHighlightConfig = {
+  selected: { borderColor: '#818cf8', shadow: '0 0 0 2px rgba(99,102,241,0.55)' },
+  prerequisite: { borderColor: '#f87171', shadow: '0 0 0 2px rgba(248,113,113,0.5)' },
+  dependent: { borderColor: '#34d399', shadow: '0 0 0 2px rgba(52,211,153,0.5)' },
+  none: { borderColor: null, shadow: null },
+}
+
 export default function SkillNode({ id, data }) {
   const updateNodeStatus = useStore((s) => s.updateNodeStatus)
-  const setSelectedNodeId = useStore((s) => s.setSelectedNodeId)
   const selectedNodeId = useStore((s) => s.selectedNodeId)
   const isSelected = selectedNodeId === id
   const config = statusConfig[data.status] || statusConfig.pending
+  const relationHighlight = relationHighlightConfig[data.relationHighlight || 'none']
   const isLocked = !data.unlocked
+  const nodeTitle = data.title || data.label || 'New Skill'
+
+  const borderColor = relationHighlight.borderColor || (isSelected ? '#818cf8' : config.borderColor)
+  const primaryShadow = relationHighlight.shadow || 'none'
+  const unlockShadow = data.status === 'completed'
+    ? '0 0 16px 2px rgba(52,211,153,0.4)'
+    : data.unlocked
+      ? '0 0 16px 2px rgba(99,102,241,0.45)'
+      : 'none'
+  const boxShadow = [primaryShadow, unlockShadow].filter((shadow) => shadow !== 'none').join(', ') || 'none'
 
   return (
-    <div onClick={() => setSelectedNodeId(isSelected ? null : id)} style={{
+    <div style={{
       minWidth: 190, background: '#0f172a',
-      border: `2px solid ${isSelected ? '#818cf8' : config.borderColor}`,
+      border: `2px solid ${borderColor}`,
       borderRadius: 16,
-      boxShadow: data.status === 'completed'
-        ? '0 0 16px 2px rgba(52,211,153,0.4)'
-        : data.unlocked ? '0 0 16px 2px rgba(99,102,241,0.5)' : 'none',
+      boxShadow,
       opacity: isLocked ? 0.5 : 1,
       cursor: 'pointer', transition: 'all 0.3s',
     }}>
@@ -30,7 +45,7 @@ export default function SkillNode({ id, data }) {
         style={{ background: '#818cf8', border: '2px solid #4f46e5' }} />
 
       <div style={{ padding: '12px 16px 4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ fontWeight: 600, fontSize: 14, color: config.textColor }}>{data.label}</span>
+        <span style={{ fontWeight: 600, fontSize: 14, color: config.textColor }}>{nodeTitle}</span>
         {isLocked && <span style={{ fontSize: 11, background: '#1e293b', color: '#94a3b8', padding: '2px 8px', borderRadius: 999 }}>🔒</span>}
       </div>
 
