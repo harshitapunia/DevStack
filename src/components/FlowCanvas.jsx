@@ -1,11 +1,10 @@
-import { useCallback, useState, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import ReactFlow, {
   Background,
   Controls,
   addEdge,
   applyNodeChanges,
   applyEdgeChanges,
-  useReactFlow,
   ReactFlowProvider,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
@@ -13,14 +12,68 @@ import { useStore } from '../store/useStore'
 import SkillNode from './SkillNode'
 import AddSkillModal from './AddSkillModal'
 import NodeSidebar from './NodeSidebar'
+import ProgressDashboard from './ProgressDashboard'
 
 const nodeTypes = { skillNode: SkillNode }
+const DEFAULT_EDGE_STYLE = { stroke: '#4f46e5', strokeWidth: 2 }
 
-function Flow() {
+const collectUpstream = (selectedNodeId, allEdges) => {
+  const nodeIds = new Set()
+  const edgeIds = new Set()
+  const queue = [selectedNodeId]
+  const visited = new Set([selectedNodeId])
+
+  while (queue.length) {
+    const targetNode = queue.shift()
+
+    allEdges.forEach((edge) => {
+      if (edge.target !== targetNode) return
+
+      edgeIds.add(edge.id)
+      nodeIds.add(edge.source)
+
+      if (!visited.has(edge.source)) {
+        visited.add(edge.source)
+        queue.push(edge.source)
+      }
+    })
+  }
+
+  return { nodeIds, edgeIds }
+}
+
+const collectDownstream = (selectedNodeId, allEdges) => {
+  const nodeIds = new Set()
+  const edgeIds = new Set()
+  const queue = [selectedNodeId]
+  const visited = new Set([selectedNodeId])
+
+  while (queue.length) {
+    const sourceNode = queue.shift()
+
+    allEdges.forEach((edge) => {
+      if (edge.source !== sourceNode) return
+
+      edgeIds.add(edge.id)
+      nodeIds.add(edge.target)
+
+      if (!visited.has(edge.target)) {
+        visited.add(edge.target)
+        queue.push(edge.target)
+      }
+    })
+  }
+
+  return { nodeIds, edgeIds }
+}
+
+function Flow({ onSaveRoadmap, onBackToLibrary, activeRoadmapTitle }) {
   const storeNodes = useStore((s) => s.nodes)
   const storeEdges = useStore((s) => s.edges)
   const setStoreNodes = useStore((s) => s.setNodes)
   const setStoreEdges = useStore((s) => s.setEdges)
+  const updateNodeData = useStore((s) => s.updateNodeData)
+  const updateNodeStatus = useStore((s) => s.updateNodeStatus)
   const selectedNodeId = useStore((s) => s.selectedNodeId)
   const setSelectedNodeId = useStore((s) => s.setSelectedNodeId)
   const deleteNode = useStore((s) => s.deleteNode)
@@ -35,14 +88,61 @@ function Flow() {
   useEffect(() => setEdges(storeEdges), [storeEdges])
 
   useEffect(() => {
-    if (sidebarNode) {
-      const updated = storeNodes.find((n) => n.id === sidebarNode.id)
-      if (updated) setSidebarNode(updated)
+    if (!selectedNodeId) {
+      setSidebarNode(null)
+      return
     }
-  }, [storeNodes])
+
+    const updated = storeNodes.find((n) => n.id === selectedNodeId)
+    if (updated) setSidebarNode(updated)
+  }, [selectedNodeId, storeNodes])
+
+  const dependencyContext = useMemo(() => {
+    if (!selectedNodeId) {
+      return {
+        prerequisiteNodeIds: new Set(),
+        prerequisiteEdgeIds: new Set(),
+        dependentNodeIds: new Set(),
+        dependentEdgeIds: new Set(),
+      }
+    }
+
+    const upstream = collectUpstream(selectedNodeId, edges)
+    const downstream = collectDownstream(selectedNodeId, edges)
+
+    return {
+      prerequisiteNodeIds: upstream.nodeIds,
+      prerequisiteEdgeIds: upstream.edgeIds,
+      dependentNodeIds: downstream.nodeIds,
+      dependentEdgeIds: downstream.edgeIds,
+    }
+  }, [selectedNodeId, edges])
+
+  const highlightedNodes = useMemo(() => {
+    return nodes.map((node) => {
+      let relationHighlight = 'none'
+
+      if (selectedNodeId === node.id) {
+        relationHighlight = 'selected'
+      } else if (dependencyContext.prerequisiteNodeIds.has(node.id)) {
+        relationHighlight = 'prerequisite'
+      } else if (dependencyContext.dependentNodeIds.has(node.id)) {
+        relationHighlight = 'dependent'
+      }
+
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          relationHighlight,
+        },
+      }
+    })
+  }, [nodes, selectedNodeId, dependencyContext])
 
   const onNodesChange = useCallback((changes) => {
     if (mode === 'pan') return
+
     setNodes((n) => {
       const next = applyNodeChanges(changes, n)
       setStoreNodes(next)
@@ -60,43 +160,77 @@ function Flow() {
 
   const onConnect = useCallback((params) => {
     setEdges((e) => {
-      const next = addEdge({
-        ...params, animated: true,
-        style: { stroke: '#4f46e5', strokeWidth: 2 }
-      }, e)
+      const next = addEdge(
+        {
+          ...params,
+          animated: true,
+          style: DEFAULT_EDGE_STYLE,
+        },
+        e
+      )
+
       setStoreEdges(next)
       return next
     })
   }, [setStoreEdges])
 
   const onNodeClick = useCallback((_, node) => {
-    if (mode === 'pan') return
     setSelectedNodeId(node.id)
-    setSidebarNode(node)
-  }, [setSelectedNodeId, mode])
+  }, [setSelectedNodeId])
 
   const handleUpdateNode = useCallback((nodeId, updates) => {
-    const updated = storeNodes.map(n =>
-      n.id === nodeId ? { ...n, data: { ...n.data, ...updates } } : n
-    )
-    setStoreNodes(updated)
-    setNodes(updated)
-    if (sidebarNode?.id === nodeId) {
-      setSidebarNode(prev => ({ ...prev, data: { ...prev.data, ...updates } }))
-    }
-  }, [storeNodes, setStoreNodes, sidebarNode])
+    updateNodeData(nodeId, updates)
+  }, [updateNodeData])
 
-  const styledEdges = selectedNodeId
-    ? edges.map((edge) => {
-        if (edge.target === selectedNodeId)
-          return { ...edge, style: { stroke: '#f87171', strokeWidth: 2.5 }, animated: true }
-        if (edge.source === selectedNodeId)
-          return { ...edge, style: { stroke: '#34d399', strokeWidth: 2.5 }, animated: true }
-        return { ...edge, style: { stroke: '#1e293b', strokeWidth: 1 }, animated: false }
-      })
-    : edges
+  const styledEdges = useMemo(() => {
+    if (!selectedNodeId) return edges
 
-  const handleSaveAll = () => {
+    return edges.map((edge) => {
+      if (dependencyContext.prerequisiteEdgeIds.has(edge.id)) {
+        return {
+          ...edge,
+          animated: true,
+          style: { stroke: '#f87171', strokeWidth: 2.8 },
+        }
+      }
+
+      if (dependencyContext.dependentEdgeIds.has(edge.id)) {
+        return {
+          ...edge,
+          animated: true,
+          style: { stroke: '#34d399', strokeWidth: 2.8 },
+        }
+      }
+
+      return {
+        ...edge,
+        animated: false,
+        style: { stroke: '#1e293b', strokeWidth: 1 },
+      }
+    })
+  }, [edges, selectedNodeId, dependencyContext])
+
+  const progress = useMemo(() => {
+    const total = storeNodes.length
+    const completed = storeNodes.filter((node) => node.data.status === 'completed').length
+    const unlocked = storeNodes.filter((node) => node.data.unlocked).length
+    const percentage = total === 0 ? 0 : Math.round((completed / total) * 100)
+
+    return { total, completed, unlocked, percentage }
+  }, [storeNodes])
+
+  const translateExtent = useMemo(() => {
+    if (nodes.length === 0) return [[-500, -500], [2000, 2000]]
+
+    const maxX = Math.max(...nodes.map((n) => n.position.x)) + 600
+    const maxY = Math.max(...nodes.map((n) => n.position.y)) + 600
+    const minX = Math.min(...nodes.map((n) => n.position.x)) - 400
+    const minY = Math.min(...nodes.map((n) => n.position.y)) - 400
+
+    return [[minX, minY], [maxX, maxY]]
+  }, [nodes])
+
+  const handleExportJson = () => {
     const dataStr = JSON.stringify({ nodes: storeNodes, edges: storeEdges }, null, 2)
     const blob = new Blob([dataStr], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
@@ -105,6 +239,22 @@ function Flow() {
     a.download = 'skill-tree.json'
     a.click()
     URL.revokeObjectURL(url)
+  }
+
+  const handleSaveRoadmap = () => {
+    if (!onSaveRoadmap) return
+    onSaveRoadmap({
+      nodes: storeNodes,
+      edges: storeEdges,
+      stats: progress,
+    })
+  }
+
+  const handleBackToLibrary = () => {
+    if (!onBackToLibrary) return
+    setSelectedNodeId(null)
+    setSidebarNode(null)
+    onBackToLibrary()
   }
 
   const isEmpty = storeNodes.length === 0
@@ -151,6 +301,46 @@ function Flow() {
         {/* Logo */}
         <span style={{ fontSize: 20 }}>🎮</span>
         <span style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 16 }}>DevStakes</span>
+
+        {onBackToLibrary && (
+          <button
+            onClick={handleBackToLibrary}
+            style={{
+              marginLeft: 8,
+              background: 'rgba(59,130,246,0.12)',
+              color: '#bfdbfe',
+              border: '1px solid #2563eb',
+              borderRadius: 8,
+              padding: '6px 12px',
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}
+            title="Back to main screen"
+          >
+            ← Back to Main Screen
+          </button>
+        )}
+
+        {activeRoadmapTitle && (
+          <div
+            style={{
+              marginLeft: 6,
+              padding: '4px 10px',
+              borderRadius: 999,
+              border: '1px solid #334155',
+              background: '#0b1220',
+              color: '#94a3b8',
+              fontSize: 11,
+              maxWidth: 220,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            {activeRoadmapTitle}
+          </div>
+        )}
 
         <div style={{ width: 1, height: 28, background: '#1e293b', margin: '0 4px' }} />
 
@@ -203,6 +393,13 @@ function Flow() {
 
         <div style={{ flex: 1 }} />
 
+        <ProgressDashboard
+          total={progress.total}
+          completed={progress.completed}
+          unlocked={progress.unlocked}
+          percentage={progress.percentage}
+        />
+
         {/* Mode pill */}
         <div style={{
           background: mode === 'pan' ? 'rgba(99,102,241,0.1)' : 'rgba(52,211,153,0.1)',
@@ -230,13 +427,28 @@ function Flow() {
 
         <div style={{ width: 1, height: 28, background: '#1e293b', margin: '0 4px' }} />
 
-        <button onClick={handleSaveAll} style={{
-          background: 'transparent', color: '#34d399',
-          border: '1px solid #34d399', borderRadius: 10,
-          padding: '7px 16px', fontSize: 13, fontWeight: 600,
-          cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
-        }}>
-          💾 Save
+        <button
+          onClick={handleSaveRoadmap}
+          style={{
+            background: '#34d399', color: '#052e16',
+            border: '1px solid #34d399', borderRadius: 10,
+            padding: '7px 16px', fontSize: 13, fontWeight: 700,
+            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
+          }}
+        >
+          💾 Save Roadmap
+        </button>
+
+        <button
+          onClick={handleExportJson}
+          style={{
+            background: 'transparent', color: '#34d399',
+            border: '1px solid #34d399', borderRadius: 10,
+            padding: '7px 16px', fontSize: 13, fontWeight: 600,
+            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
+          }}
+        >
+          Export JSON
         </button>
       </div>
 
@@ -284,7 +496,7 @@ function Flow() {
         )}
 
         <ReactFlow
-          nodes={nodes}
+          nodes={highlightedNodes}
           edges={styledEdges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
@@ -292,10 +504,8 @@ function Flow() {
           nodeTypes={nodeTypes}
           onNodeClick={onNodeClick}
           onPaneClick={() => {
-            if (mode === 'edit') {
-              setSelectedNodeId(null)
-              setSidebarNode(null)
-            }
+            setSelectedNodeId(null)
+            setSidebarNode(null)
           }}
           fitView={!isEmpty}
           style={{ width: '100%', height: '100%', background: '#0f172a' }}
@@ -308,14 +518,7 @@ function Flow() {
           nodesDraggable={mode === 'edit'}
           nodesConnectable={mode === 'edit'}
           elementsSelectable={mode === 'edit'}
-          translateExtent={(() => {
-  if (nodes.length === 0) return [[-500, -500], [2000, 2000]]
-  const maxX = Math.max(...nodes.map((n) => n.position.x)) + 600
-  const maxY = Math.max(...nodes.map((n) => n.position.y)) + 600
-  const minX = Math.min(...nodes.map((n) => n.position.x)) - 400
-  const minY = Math.min(...nodes.map((n) => n.position.y)) - 400
-  return [[minX, minY], [maxX, maxY]]
-})()}
+          translateExtent={translateExtent}
           minZoom={0.3}
           maxZoom={1.5}
         >
@@ -335,15 +538,20 @@ function Flow() {
         node={sidebarNode}
         onClose={() => { setSidebarNode(null); setSelectedNodeId(null) }}
         onUpdateNode={handleUpdateNode}
+        onUpdateStatus={updateNodeStatus}
       />
     </div>
   )
 }
 
-export default function FlowCanvas() {
+export default function FlowCanvas({ onSaveRoadmap, onBackToLibrary, activeRoadmapTitle }) {
   return (
     <ReactFlowProvider>
-      <Flow />
+      <Flow
+        onSaveRoadmap={onSaveRoadmap}
+        onBackToLibrary={onBackToLibrary}
+        activeRoadmapTitle={activeRoadmapTitle}
+      />
     </ReactFlowProvider>
   )
 }
