@@ -27,6 +27,7 @@ const normalizeNode = (node) => {
       label: String(data.label || title),
       description: String(data.description || ''),
       links: normalizeLinks(data.links),
+      category: data.category || '',
       status,
       unlocked: Boolean(data.unlocked),
     },
@@ -156,25 +157,32 @@ export const useStore = create((set, get) => ({
     const nodes = get().nodes
     const edges = get().edges
 
-    // Find parent node to position below it
     const parent = nodes.find((n) => n.id === parentId)
-    const siblings = parentId
+    // Count existing children to spread siblings horizontally
+    const existingChildren = parentId
       ? edges.filter((e) => e.source === parentId).length
       : nodes.filter((n) => !edges.some((e) => e.target === n.id)).length
 
+    const NODE_WIDTH = 240  // card width + gap
+    const NODE_HEIGHT = 200 // vertical spacing
+
     let position
     if (parent) {
+      // Center child below parent, offset by sibling count
+      const offsetX = (existingChildren - 0.5) * NODE_WIDTH
       position = {
-        x: parent.position.x + (siblings - 1) * 260,
-        y: parent.position.y + 220,
+        x: parent.position.x + offsetX,
+        y: parent.position.y + NODE_HEIGHT,
       }
     } else if (nodes.length === 0) {
-      position = { x: 400, y: 200 }
+      position = { x: 300, y: 180 }
     } else {
-      position = {
-        x: 100 + nodes.length * 220,
-        y: 200,
-      }
+      // Place to the right of last root node
+      const rootNodes = nodes.filter((n) => !edges.some((e) => e.target === n.id))
+      const lastRoot = rootNodes[rootNodes.length - 1]
+      position = lastRoot
+        ? { x: lastRoot.position.x + NODE_WIDTH, y: lastRoot.position.y }
+        : { x: 100 + nodes.length * NODE_WIDTH, y: 180 }
     }
 
     const newNode = {
@@ -186,8 +194,9 @@ export const useStore = create((set, get) => ({
         label: data.title || data.label || 'New Skill',
         description: data.description || '',
         links: normalizeLinks(data.links),
+        category: data.category || '',
         status: 'pending',
-        unlocked: !parentId,
+        unlocked: !parentId,  // root nodes start unlocked
       },
     }
 
@@ -195,8 +204,9 @@ export const useStore = create((set, get) => ({
       id: `e_${parentId}_${id}`,
       source: parentId,
       target: id,
-      animated: true,
-      style: { stroke: '#4f46e5', strokeWidth: 2 },
+      type: 'smoothstep',
+      animated: false,
+      style: { stroke: 'rgba(99,102,241,0.5)', strokeWidth: 1.8 },
     }] : []
 
     const updatedNodes = computeUnlocks([...nodes, newNode], [...edges, ...newEdge])
