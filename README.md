@@ -1,6 +1,4 @@
-<div align="center">
 
-<img src="public/favicon.svg" alt="DevStakes Logo" width="64" />
 
 # DevStakes
 
